@@ -1,31 +1,32 @@
-/* =================================================================================================
-   Data Quality Checks for Silver Layer Design
-   =================================================================================================
-   This script contains the exploratory / diagnostic SQL queries that were used to identify 
-   bad or inconsistent data patterns in the BRONZE layer and to derive the cleansing rules 
-   implemented in [silver.load_silver].
+/*
+============================================================================
+Quality Checks
+============================================================================
+Script Purpose:
+  This script performs various quality checks for data consistency, accuracy,
+  and standardization across the 'silver' schemas. 
+  It includes checks for:
+    - Null or duplicate primary keys.
+    - Unwanted spaces in string fields.
+    - Data standardization and consistency.
+    - Invalid date ranges and orders.
+    - Data consistency between related fields.
 
-   Main goals:
-   - Detect duplicate business keys (e.g., customers with multiple records).
-   - Identify invalid or suspicious dates (future dates, malformed integer dates, etc.).
-   - Standardize categorical fields (gender, marital status, product line, country, etc.).
-   - Remove hidden control characters (CR/LF) that appeared as arrows in the UI.
-   - Validate sales amounts vs. price * quantity.
+Usage Notes:
+  - Run these checks after data loading Silver Layer.
+  - Investigate and resolve any discrepancies found during the checks.
+  */
 
-   All queries below are READ-ONLY diagnostics. The actual cleansing logic is implemented in:
-   - PROCEDURE [silver].[load_silver]
 
-   Usage:
-   - Run these queries against the BRONZE layer to understand raw data issues.
-   - Compare results with the SILVER tables loaded by [silver.load_silver] to verify that 
-     the cleansing rules behave as expected.
-================================================================================================= */
+/* ================================================================================================
+   SILVER TABLE: silver.crm_cust_info
+   SOURCE TABLE: bronze.crm_cust_info
+   ================================================================================================ */
 
 --------------------------------------------------------------------------------------------------
--- 1. BRONZE.CRM_CUST_INFO – Duplicate Customers & Attribute Profiling
---------------------------------------------------------------------------------------------------
-
 -- 1.1 Detect customers with duplicate cst_id (business key duplicates)
+--     (Silver keeps only the latest record per cst_id.)
+--------------------------------------------------------------------------------------------------
 SELECT 
     cst_id,
     COUNT(*) AS cnt_rows
@@ -34,8 +35,10 @@ GROUP BY cst_id
 HAVING COUNT(*) > 1
 ORDER BY cnt_rows DESC, cst_id;
 
+--------------------------------------------------------------------------------------------------
 -- 1.2 Inspect all duplicate rows per customer, ordered by cst_create_date (latest first)
 --     This supports the decision to keep only the latest record per cst_id in SILVER.
+--------------------------------------------------------------------------------------------------
 SELECT *
 FROM (
     SELECT  *,
@@ -49,7 +52,11 @@ FROM (
 WHERE flag_last > 1
 ORDER BY cst_id, cst_create_date DESC;
 
--- 1.3 Check distribution of marital status values (to justify mapping S/M -> Single/Married, else 'n/a')
+--------------------------------------------------------------------------------------------------
+-- 1.3 Check distribution of marital status values
+--     Justifies mapping:
+--       'S' -> 'Single', 'M' -> 'Married', ELSE 'n/a'
+--------------------------------------------------------------------------------------------------
 SELECT 
     TRIM(cst_marital_status) AS raw_marital_status,
     COUNT(*) AS cnt_rows
@@ -57,7 +64,11 @@ FROM bronze.crm_cust_info
 GROUP BY TRIM(cst_marital_status)
 ORDER BY cnt_rows DESC;
 
--- 1.4 Check distribution of gender values (to justify mapping F/M -> Female/Male, else 'n/a')
+--------------------------------------------------------------------------------------------------
+-- 1.4 Check distribution of gender values
+--     Justifies mapping:
+--       'F' -> 'Female', 'M' -> 'Male', ELSE 'n/a'
+--------------------------------------------------------------------------------------------------
 SELECT 
     TRIM(cst_gndr) AS raw_gender,
     UPPER(TRIM(cst_gndr)) AS upper_trim_gender,
@@ -67,12 +78,21 @@ GROUP BY TRIM(cst_gndr), UPPER(TRIM(cst_gndr))
 ORDER BY cnt_rows DESC;
 
 
---------------------------------------------------------------------------------------------------
--- 2. BRONZE.CRM_PRD_INFO – Product Line, Category & SCD Range Logic
---------------------------------------------------------------------------------------------------
 
--- 2.1 Inspect raw product line codes to justify mapping:
---     'M' -> Mountain, 'R' -> Road, 'S' -> Other Sales, 'T' -> Touring, else 'n/a'
+/* ================================================================================================
+   SILVER TABLE: silver.crm_prd_info
+   SOURCE TABLE: bronze.crm_prd_info
+   ================================================================================================ */
+
+--------------------------------------------------------------------------------------------------
+-- 2.1 Inspect raw product line codes
+--     Justifies mapping:
+--       'M' -> 'Mountain'
+--       'R' -> 'Road'
+--       'S' -> 'Other Sales'
+--       'T' -> 'Touring'
+--       ELSE 'n/a'
+--------------------------------------------------------------------------------------------------
 SELECT 
     TRIM(prd_line) AS raw_prd_line,
     UPPER(TRIM(prd_line)) AS upper_prd_line,
@@ -81,8 +101,12 @@ FROM bronze.crm_prd_info
 GROUP BY TRIM(prd_line), UPPER(TRIM(prd_line))
 ORDER BY cnt_rows DESC;
 
--- 2.2 Validate category key extraction from prd_key (first 5 chars) and product key (rest)
---     Used to derive cat_id and cleaned prd_key in SILVER.
+--------------------------------------------------------------------------------------------------
+-- 2.2 Validate category key extraction from prd_key
+--     Used to derive:
+--       cat_id  = REPLACE(SUBSTRING(prd_key, 1, 5), '-', '_')
+--       prd_key = SUBSTRING(prd_key, 7, LEN(prd_key))
+--------------------------------------------------------------------------------------------------
 SELECT TOP (50)
     prd_id,
     prd_key,
@@ -90,7 +114,10 @@ SELECT TOP (50)
     SUBSTRING(prd_key, 7, LEN(prd_key))         AS derived_prd_key
 FROM bronze.crm_prd_info;
 
--- 2.3 Inspect product date ranges to support SCD logic (prd_start_dt, prd_end_dt in SILVER)
+--------------------------------------------------------------------------------------------------
+-- 2.3 Inspect product start dates to support SCD range logic
+--     In SILVER, prd_end_dt is derived using LEAD(prd_start_dt) - 1.
+--------------------------------------------------------------------------------------------------
 SELECT TOP (100)
     prd_id,
     prd_key,
@@ -99,11 +126,19 @@ FROM bronze.crm_prd_info
 ORDER BY prd_key, prd_start_dt;
 
 
---------------------------------------------------------------------------------------------------
--- 3. BRONZE.CRM_SALES_DETAILS – Date Quality & Sales Consistency
---------------------------------------------------------------------------------------------------
 
--- 3.1 Detect invalid order dates: negative or not 8-digit integers
+/* ================================================================================================
+   SILVER TABLE: silver.crm_sales_details
+   SOURCE TABLE: bronze.crm_sales_details
+   ================================================================================================ */
+
+--------------------------------------------------------------------------------------------------
+-- 3.1 Detect invalid order dates
+--     Invalid when:
+--       - negative
+--       - not 8 digits long
+--     These are set to NULL in SILVER.
+--------------------------------------------------------------------------------------------------
 SELECT TOP (100)
     sls_ord_num,
     sls_order_dt
@@ -112,7 +147,14 @@ WHERE sls_order_dt < 0
    OR LEN(sls_order_dt) != 8
 ORDER BY sls_ord_num;
 
--- 3.2 Detect invalid ship dates: negative, wrong length, or earlier than order date
+--------------------------------------------------------------------------------------------------
+-- 3.2 Detect invalid ship dates
+--     Invalid when:
+--       - negative
+--       - not 8 digits long
+--       - earlier than order date
+--     These are set to NULL in SILVER.
+--------------------------------------------------------------------------------------------------
 SELECT TOP (100)
     sls_ord_num,
     sls_order_dt,
@@ -123,7 +165,14 @@ WHERE sls_ship_dt < 0
    OR sls_ship_dt < sls_order_dt
 ORDER BY sls_ord_num;
 
--- 3.3 Detect invalid due dates: negative, wrong length, or earlier than order date
+--------------------------------------------------------------------------------------------------
+-- 3.3 Detect invalid due dates
+--     Invalid when:
+--       - negative
+--       - not 8 digits long
+--       - earlier than order date
+--     These are set to NULL in SILVER.
+--------------------------------------------------------------------------------------------------
 SELECT TOP (100)
     sls_ord_num,
     sls_order_dt,
@@ -134,11 +183,15 @@ WHERE sls_due_dt < 0
    OR sls_due_dt < sls_order_dt
 ORDER BY sls_ord_num;
 
--- 3.4 Detect inconsistent sales amounts where:
---     - sales <= 0
---     - sales is NULL
---     - sales != quantity * ABS(price)
---     This supports the rule: recompute sls_sales as sls_price * sls_quantity in SILVER.
+--------------------------------------------------------------------------------------------------
+-- 3.4 Detect inconsistent sales amounts
+--     Cases where:
+--       - sls_sales IS NULL
+--       - sls_sales <= 0
+--       - sls_sales != sls_quantity * ABS(sls_price)
+--     Supports rule in SILVER:
+--       recompute sls_sales as sls_price * sls_quantity.
+--------------------------------------------------------------------------------------------------
 SELECT TOP (100)
     sls_ord_num,
     sls_quantity,
@@ -152,23 +205,31 @@ WHERE sls_sales IS NULL
 ORDER BY sls_ord_num;
 
 
---------------------------------------------------------------------------------------------------
--- 4. BRONZE.ERP_CUST_AZ12 – Customer ID, Future Birthdates & Gender Cleanup
---------------------------------------------------------------------------------------------------
 
--- 4.1 Inspect raw gender values and show impact of trimming / uppercasing
---     (Also useful for detecting hidden CR/LF characters that showed as arrows in the UI.)
+/* ================================================================================================
+   SILVER TABLE: silver.erp_cust_az12
+   SOURCE TABLE: bronze.erp_cust_az12
+   ================================================================================================ */
+
+--------------------------------------------------------------------------------------------------
+-- 4.1 Inspect raw gender values and reveal hidden CR/LF characters
+--     (These appeared as down-left arrows in the UI.)
+--     Supports the cleanup using REPLACE(CHAR(13)/CHAR(10)) and TRIM in SILVER.
+--------------------------------------------------------------------------------------------------
 SELECT TOP (50)
-    gen                  AS raw_gen,
-    CONCAT('[', gen, ']') AS gen_in_brackets,
-    UPPER(gen)           AS upper_raw_gen,
-    UPPER(TRIM(gen))     AS upper_trim_gen,
-    LEN(gen)             AS len_gen
+    gen                      AS raw_gen,
+    CONCAT('[', gen, ']')    AS gen_in_brackets,
+    UPPER(gen)               AS upper_raw_gen,
+    UPPER(TRIM(gen))         AS upper_trim_gen,
+    LEN(gen)                 AS len_gen
 FROM bronze.erp_cust_az12
 WHERE gen IS NOT NULL
 ORDER BY len_gen DESC;
 
--- 4.2 Detect future birthdates (bdate > GETDATE()), which are later set to NULL in SILVER.
+--------------------------------------------------------------------------------------------------
+-- 4.2 Detect future birthdates (bdate > GETDATE())
+--     These are set to NULL in SILVER.
+--------------------------------------------------------------------------------------------------
 SELECT TOP (50)
     cid,
     bdate
@@ -176,7 +237,10 @@ FROM bronze.erp_cust_az12
 WHERE bdate > GETDATE()
 ORDER BY bdate;
 
--- 4.3 Inspect NAS-prefixed customer IDs that are later cleaned (strip NAS prefix).
+--------------------------------------------------------------------------------------------------
+-- 4.3 Inspect NAS-prefixed customer IDs that are later cleaned in SILVER
+--     Rule: strip 'NAS' prefix and keep remainder.
+--------------------------------------------------------------------------------------------------
 SELECT TOP (50)
     cid,
     CASE 
@@ -187,12 +251,18 @@ FROM bronze.erp_cust_az12
 ORDER BY cid;
 
 
---------------------------------------------------------------------------------------------------
--- 5. BRONZE.ERP_LOC_A101 – Country Normalization & Hidden Characters
---------------------------------------------------------------------------------------------------
 
--- 5.1 Inspect distinct raw country values to understand the variety:
---     null, empty, Australia, Canada, DE, France, Germany, United Kingdom, United States, US, USA, etc.
+/* ================================================================================================
+   SILVER TABLE: silver.erp_loc_a101
+   SOURCE TABLE: bronze.erp_loc_a101
+   ================================================================================================ */
+
+--------------------------------------------------------------------------------------------------
+-- 5.1 Inspect distinct raw country values
+--     Used to understand the variety:
+--       NULL, empty, Australia, Canada, DE, France, Germany, 
+--       United Kingdom, United States, US, USA, etc.
+--------------------------------------------------------------------------------------------------
 SELECT 
     cntry                          AS raw_cntry,
     CONCAT('[', cntry, ']')        AS cntry_in_brackets,
@@ -203,11 +273,15 @@ FROM bronze.erp_loc_a101
 GROUP BY cntry, UPPER(cntry), UPPER(TRIM(cntry)), LEN(cntry)
 ORDER BY raw_cntry;
 
--- 5.2 Preview normalized country values (logic later used in SILVER):
---     - NULL / empty -> 'n/a'
---     - US / USA / United States -> 'United States'
---     - DE / Germany             -> 'Germany'
---     - other non-empty values   -> trimmed original
+--------------------------------------------------------------------------------------------------
+-- 5.2 Preview normalized country values
+--     Logic later used in SILVER:
+--       - NULL / empty                 -> 'n/a'
+--       - US / USA / United States     -> 'United States'
+--       - DE / Germany                 -> 'Germany'
+--       - Other non-empty values       -> trimmed original
+--     Also strips CR/LF characters.
+--------------------------------------------------------------------------------------------------
 SELECT DISTINCT
     REPLACE(cid, '-', '') AS cid_cleaned,
     cntry                 AS raw_cntry,
@@ -224,11 +298,16 @@ FROM bronze.erp_loc_a101
 ORDER BY normalized_cntry, raw_cntry;
 
 
---------------------------------------------------------------------------------------------------
--- 6. BRONZE.ERP_PX_CAT_G1V2 – Maintenance Field Cleanup (Hidden CR/LF)
---------------------------------------------------------------------------------------------------
 
--- 6.1 Inspect maintenance text to reveal hidden CR/LF (they appeared as arrows in the UI).
+/* ================================================================================================
+   SILVER TABLE: silver.erp_px_cat_g1v2
+   SOURCE TABLE: bronze.erp_px_cat_g1v2
+   ================================================================================================ */
+
+--------------------------------------------------------------------------------------------------
+-- 6.1 Inspect maintenance text and reveal hidden CR/LF characters
+--     These appeared as arrows in the UI and are later removed in SILVER.
+--------------------------------------------------------------------------------------------------
 SELECT TOP (50)
     id,
     cat,
@@ -239,8 +318,11 @@ SELECT TOP (50)
 FROM bronze.erp_px_cat_g1v2
 ORDER BY len_maintenance DESC;
 
--- 6.2 Preview cleaned maintenance values (logic later used in SILVER):
---     Strip CHAR(13) and CHAR(10) and TRIM spaces.
+--------------------------------------------------------------------------------------------------
+-- 6.2 Preview cleaned maintenance values
+--     SILVER logic:
+--       TRIM(REPLACE(REPLACE(maintenance, CHAR(13), ''), CHAR(10), ''))
+--------------------------------------------------------------------------------------------------
 SELECT TOP (50)
     id,
     cat,
