@@ -61,3 +61,54 @@ This repository is designed as a strong portfolio piece, showcasing **my data en
 
 It serves as a practical, industry-aligned demonstration of how modern data platforms transform raw data into reliable, analytics-ready insights.
 
+--------------
+
+## 🛠️ Important Links & Tools
+
+Everything is **100% Free** to use!
+
+- **Datasets:** Access the project CSV files  
+  👉 [Project Datasets](docs/datasets)
+
+- **SQL Server (Docker Image):** Pull and run SQL Server using Docker  
+  👉 `docker pull mcr.microsoft.com/azure-sql-edge`
+
+- **Visual Studio Code:** Download the free code editor for SQL, DevOps, and scripting  
+  👉 [Download VS Code](https://code.visualstudio.com/)
+
+- **Git Repository:** Create and manage your GitHub repo for version control  
+  👉 [GitHub](https://github.com/)
+
+- **Draw.io:** Create architecture diagrams, data models, and flowcharts  
+  👉 [Draw.io](https://app.diagrams.net/)
+
+- **Notion Template:** Access the project planning and documentation template  
+  👉 [Project Template on Notion](https://www.notion.so)
+
+-------------------------
+
+## 🚀 Project Requirements
+
+### Building the Data Warehouse (Data Engineering)
+
+#### 🎯 Objective
+Design and implement a modern data warehouse in SQL Server to centralize sales information and support analytical reporting and data-driven decision-making.
+
+#### 📌 Specifications
+
+- **Data Sources:** Load and integrate data from two operational systems—ERP and CRM—provided as CSV files.
+- **Data Quality:** Apply cleaning, standardization, and validation steps to address inconsistencies before analysis.
+- **Integration:** Merge both datasets into a unified, analytics-friendly data model optimized for querying.
+- **Scope:** Process only the most recent snapshot of data; historical tracking is not required for this project.
+- **Documentation:** Deliver clear and accessible documentation of the data model for business users and analytics teams.
+
+
+-------------------------
+
+## 🌟 About Me
+
+Hi! I'm **Karim Ziada**, a passionate Data Engineer and aspiring technologist dedicated to building modern data solutions.  
+This project showcases my hands-on experience with data architecture, SQL development, ETL pipelines, and analytics—demonstrating the skills I’m developing for future **data engineering job opportunities**.
+
+
+
